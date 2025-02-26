@@ -28,6 +28,7 @@
 #define RED_BRIGHT 0
 #define GREEN_BRIGHT 50
 #define BLUE_BRIGHT 0
+#define TIMEOUT_US 5000000 // 5 seg (5.000.000 us)
 
 uint led_rgb[3] = {13,11,12};
 uint x_center = 2047;   //centro padrão do joystick
@@ -114,11 +115,7 @@ void gpio_irq_handler(uint gpio, uint32_t events)
 }
 
 void clear_screen() {
-    #ifdef _WIN32
-        system("cls");
-    #else
-        system("clear");
-    #endif
+    printf("\033[2J\033[H");
 }
 
 float get_temperature() 
@@ -239,36 +236,80 @@ bool repeating_timer_callback(struct repeating_timer *t)
     timer_flag = true;
 }
 
+int get_input_with_timeout(float *value) {
+    char buffer[20]; // Buffer para armazenar entrada
+    int index = 0;
+    absolute_time_t start_time = get_absolute_time();
+
+    printf("> ");
+
+    while (true) {
+        // Verifica se atingiu o tempo limite
+        if (absolute_time_diff_us(start_time, get_absolute_time()) > TIMEOUT_US) {
+            printf("\nTempo esgotado! Saindo...\n");
+            return 0; // Timeout
+        }
+
+        int ch = getchar_timeout_us(100000); // Aguarda 100ms por um caractere
+
+        if (ch != PICO_ERROR_TIMEOUT) {
+            if (ch == '\n' || index >= sizeof(buffer) - 1) {
+                buffer[index] = '\0'; // Finaliza string
+                break;
+            }
+            buffer[index++] = ch;
+        }
+    }
+
+    // Converte a entrada para float
+    if (sscanf(buffer, "%f", value) == 1) {
+        return 1; // Entrada válida
+    }
+
+    return 0; // Entrada inválida
+}
+
 void temp_config()
 {
-    int temp_min, temp_max;
+    float temp_min, temp_max;
+    char hold;
 
-    clear_screen();  //limpa a tela
+    clear_screen();
 
     printf("\nInforme a temperatura MINIMA ideal: ");
-    scanf("%d", temp_min);
+    scanf("%f", &temp_min);
+    printf("\nTemperatura minima informada: %.2f ", temp_min);
+
 
     while(temp_min < TEMP_MIN || temp_min > TEMP_MAX-1)
     {
         printf("\n\n\nA temperatura informada eh invalida. ");
-        printf("\nInforme uma temperatura entre %d e %d: ", TEMP_MIN, TEMP_MAX-1);
-        scanf("%d", temp_min);
+        printf("\nInforme uma temperatura entre %.2f e %.2f: ", TEMP_MIN, TEMP_MAX-1);
+        scanf("%f", &temp_min);
+        printf("\nTemperatura minima informada: %.2f ", temp_min);
+
     }
 
     printf("\n\nInforme a temperatura MAXIMA ideal: ");
-    scanf("%d", temp_max);
+    scanf("%f", &temp_max);
+    printf("\nTemperatura maxima informada: %.2f ", temp_min);
+
 
     while(temp_max < temp_min || temp_max > TEMP_MAX)
     {
         printf("\n\n\nA temperatura informada eh invalida. ");
-        printf("\nInforme uma temperatura entre %d e %d: ", temp_min, TEMP_MAX);
-        scanf("%d", temp_max);
-    }
+        printf("\nInforme uma temperatura entre %.2f e %.2f: ", temp_min, TEMP_MAX);
+        scanf("%f", &temp_max);
+        printf("\nTemperatura maxima informada: %.2f ", temp_min);
 
-    printf("\n\nIntervalo ideal ajustado para %d até %d", temp_min, temp_max);
+    }
 
     temp_ideal_min = temp_min;
     temp_ideal_max = temp_max;
+
+    printf("\n\nIntervalo ideal ajustado para %.2f até %.2f", temp_min, temp_max);
+    printf("\nPressione qualquer tecla para sair. ");
+    scanf("%f", &temp_min);
 }
 
 int main()
@@ -360,7 +401,10 @@ int main()
 
         if(button_flag)
         {
+            cancel_repeating_timer(&timer);
             temp_config();
+            button_flag = false;
+            add_repeating_timer_ms(30000, repeating_timer_callback, NULL, &timer);
         }
         
        sleep_ms(10);
