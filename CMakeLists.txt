@@ -40,6 +40,9 @@ add_executable(Embarcatech_Final Embarcatech_Final.c inc/ssd1306.c)
 pico_set_program_name(Embarcatech_Final "Embarcatech_Final")
 pico_set_program_version(Embarcatech_Final "0.1")
 
+# Generate PIO header
+pico_generate_pio_header(Embarcatech_Final ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(Embarcatech_Final 0)
 pico_enable_stdio_usb(Embarcatech_Final 1)
@@ -49,6 +52,8 @@ target_link_libraries(Embarcatech_Final
         hardware_i2c
         hardware_adc
         hardware_pwm
+        hardware_timer
+        hardware_pio
         pico_stdlib)
 
 # Add the standard include files to the build

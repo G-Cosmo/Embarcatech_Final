@@ -3,7 +3,10 @@
 #include "hardware/i2c.h"
 #include "hardware/adc.h"
 #include "hardware/pwm.h"
+#include "hardware/timer.h"
 #include "inc/ssd1306.h"
+#include "inc/ledMatrix.h"
+#include "hardware/pio.h"
 
 
 #define I2C_PORT i2c1
@@ -17,17 +20,20 @@
 #define DEADZONE 100
 #define TEMP_MIN -50.0
 #define TEMP_MAX 100.0
-#define TEMP_IDEAL_MIN 4
-#define TEMP_IDEAL_MAX 10
 #define SAFE_RANGE_1 10
 #define SAFE_RANGE_2 30
 #define ADC_MAX 4095.0
 #define YELLOW_FACTOR 3
 #define RED_FACTOR 2
+#define RED_BRIGHT 0
+#define GREEN_BRIGHT 50
+#define BLUE_BRIGHT 0
 
 uint led_rgb[3] = {13,11,12};
 uint x_center = 2047;   //centro padrão do joystick
 uint y_center = 2047;   //centro padrão do joystick
+int temp_ideal_min = 4;
+int temp_ideal_max = 10;
 uint wrap = 10000;
 uint stepYellow = 0;
 uint stepRed = 0;
@@ -37,8 +43,8 @@ char temp_str[10];
 uint16_t vry_value = 0;
 uint64_t volatile last_time = 0;    //variavel que indica o tempo da ultima demição
 uint64_t volatile current_time = 0; //variavel que indica o tempo da atual medição
-bool led_flag = true;   //flag que habilita o controle dos leds via pwm
-bool edge_flag = false; //flag que habilita a mudaça de borda
+bool timer_flag = false;   //flag que habilita a chamada da função de contagem
+bool button_flag = false;
 bool color = true;  //variavel que indica que se o pixel está ligado ou desligado
 ssd1306_t ssd; //inicializa a estrutura do display
 
@@ -101,17 +107,18 @@ void init_display()
 
 void gpio_irq_handler(uint gpio, uint32_t events)
 {
-    current_time = to_ms_since_boot(get_absolute_time());
+    current_time = to_ms_since_boot(get_absolute_time());   //pega o tempo atual
 
-    if((current_time - last_time > 200))//implement ao deboucing
-    {
-        last_time =  current_time;
-        
-        led_flag = !led_flag;//atualiza a flag que permite ou não o controle dos leds vermelho e azul
+    if(current_time - last_time > 200) button_flag = true;
 
-        pwm_set_gpio_level(led_rgb[0], 0);
-        pwm_set_gpio_level(led_rgb[2], 0);
-    }
+}
+
+void clear_screen() {
+    #ifdef _WIN32
+        system("cls");
+    #else
+        system("clear");
+    #endif
 }
 
 float get_temperature() 
@@ -121,7 +128,7 @@ float get_temperature()
 
     // Verifica se o joystick está dentro da zona neutra
     if (vry_value > (y_center - DEADZONE) && vry_value < (y_center + DEADZONE)) {
-        return (TEMP_IDEAL_MIN + TEMP_IDEAL_MAX) / 2.0;  // Retorna a média entre os valores ideais
+        return (temp_ideal_min + temp_ideal_max) / 2.0;  // Retorna a média entre os valores ideais
     }
 
     float delta;
@@ -139,10 +146,10 @@ float get_temperature()
 
 
     // Determina a amplitude com base na direção do movimento
-    float amplitude = (delta < 0) ? (TEMP_IDEAL_MIN - TEMP_MIN) : (TEMP_MAX - TEMP_IDEAL_MAX);
+    float amplitude = (delta < 0) ? (temp_ideal_min - TEMP_MIN) : (TEMP_MAX - temp_ideal_max);
 
     // Corrige o cálculo da temperatura para respeitar os valores mínimos e máximos corretamente
-    float temperature = ((delta < 0) ? TEMP_IDEAL_MIN  : TEMP_IDEAL_MAX ) + (delta * amplitude);
+    float temperature = ((delta < 0) ? temp_ideal_min  : temp_ideal_max ) + (delta * amplitude);
 
     // Formata a temperatura como string para exibição
     sprintf(temp_str, "%.2f", temperature);
@@ -201,6 +208,69 @@ void draw_temperature()
     }
 }
 
+void countdown()
+{
+    print_frame(frame9,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame8,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame7,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame6,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame5,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame4,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame3,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame2,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame1,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    print_frame(frame0,RED_BRIGHT,GREEN_BRIGHT,BLUE_BRIGHT);
+    sleep_ms(500);
+    npClear();
+}
+
+bool repeating_timer_callback(struct repeating_timer *t)
+{
+    printf("\nInterrupção de timer");
+    timer_flag = true;
+}
+
+void temp_config()
+{
+    int temp_min, temp_max;
+
+    clear_screen();  //limpa a tela
+
+    printf("\nInforme a temperatura MINIMA ideal: ");
+    scanf("%d", temp_min);
+
+    while(temp_min < TEMP_MIN || temp_min > TEMP_MAX-1)
+    {
+        printf("\n\n\nA temperatura informada eh invalida. ");
+        printf("\nInforme uma temperatura entre %d e %d: ", TEMP_MIN, TEMP_MAX-1);
+        scanf("%d", temp_min);
+    }
+
+    printf("\n\nInforme a temperatura MAXIMA ideal: ");
+    scanf("%d", temp_max);
+
+    while(temp_max < temp_min || temp_max > TEMP_MAX)
+    {
+        printf("\n\n\nA temperatura informada eh invalida. ");
+        printf("\nInforme uma temperatura entre %d e %d: ", temp_min, TEMP_MAX);
+        scanf("%d", temp_max);
+    }
+
+    printf("\n\nIntervalo ideal ajustado para %d até %d", temp_min, temp_max);
+
+    temp_ideal_min = temp_min;
+    temp_ideal_max = temp_max;
+}
+
 int main()
 {
     stdio_init_all();
@@ -210,6 +280,9 @@ int main()
     init_buttons();//inicializa os botões
 
     init_display();//inicializa o display
+
+    npInit(LED_PIN);        //inicializa matriz de led
+    npClear();              //limpa a matriz
     
     adc_init();//inicializa o adc
     adc_gpio_init(VRX);//inicializa o pino X do adc
@@ -233,8 +306,11 @@ int main()
     uint pwm_red = init_pwm(led_rgb[0],wrap);
     uint pwm_green = init_pwm(led_rgb[1],wrap);
 
-    //ativa a interrupção do botão A
-    gpio_set_irq_enabled_with_callback(buttonA, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);   
+    struct repeating_timer timer;
+    
+    add_repeating_timer_ms(30000, repeating_timer_callback, NULL, &timer);
+
+    gpio_set_irq_enabled_with_callback(buttonA, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
     //limpa o display. O display inicia com todos os pixels apagados.
     ssd1306_fill(&ssd, false);
@@ -248,47 +324,43 @@ int main()
 
 
         //precisa ajustar a impressão
-        if(temperature < TEMP_IDEAL_MIN-SAFE_RANGE_2 || temperature > TEMP_IDEAL_MAX+SAFE_RANGE_2)
+        if(temperature < temp_ideal_min-SAFE_RANGE_2 || temperature > temp_ideal_max+SAFE_RANGE_2)
         {
             red_led_blink();
-            printf("\n Entrou em 2");
-            ssd1306_fill(&ssd, !color); //limpa o display
-            ssd1306_rect(&ssd, 3, 3, 122, 58, color, !color); //desenha um retângulo nas bordas do display
-            ssd1306_draw_string(&ssd, "Temperatura: ", 20, 15);
-            draw_temperature();
-           // ssd1306_send_data(&ssd);    //atualiza o display
-        }else if(temperature < TEMP_IDEAL_MIN-SAFE_RANGE_1 || temperature > TEMP_IDEAL_MAX+SAFE_RANGE_1)
+        }else if(temperature < temp_ideal_min-SAFE_RANGE_1 || temperature > temp_ideal_max+SAFE_RANGE_1)
         {
-            yellow_led_blink();
-            printf("\n Entrou em 1");
-            ssd1306_fill(&ssd, !color); //limpa o display
-            ssd1306_rect(&ssd, 3, 3, 122, 58, color, !color); //desenha um retângulo nas bordas do display
-            ssd1306_draw_string(&ssd, "Temperatura: ", 20, 15);
-            draw_temperature();
-           // ssd1306_send_data(&ssd);    //atualiza o display
-
+            yellow_led_blink();      
         }else{
             pwm_set_gpio_level(led_rgb[0], 0);
             pwm_set_gpio_level(led_rgb[1], 0);
-            ssd1306_fill(&ssd, !color); //limpa o display
-            ssd1306_rect(&ssd, 3, 3, 122, 58, color, !color); //desenha um retângulo nas bordas do display
-            ssd1306_draw_string(&ssd, "Temperatura: ", 20, 15);
-            draw_temperature();
-         //   ssd1306_send_data(&ssd);    //atualiza o display
         }
 
+        ssd1306_fill(&ssd, !color); //limpa o display
+        ssd1306_rect(&ssd, 3, 3, 122, 58, color, !color); //desenha um retângulo nas bordas do display
+        ssd1306_draw_string(&ssd, "Temperatura: ", 20, 15);
+        draw_temperature();
         ssd1306_send_data(&ssd);    //atualiza o display
 
         current_time = to_ms_since_boot(get_absolute_time());   //pega o tempo atual
 
         if(!gpio_get(buttonJ) && (current_time - last_time > 200))//implementa o debouncing
         {
-            printf("\n Entrou em 3");
-            temperature = (TEMP_IDEAL_MIN + TEMP_IDEAL_MAX) / 2.0;
+            temperature = (temp_ideal_min + temp_ideal_max) / 2.0;
             sprintf(temp_str, "%.2f", temperature);
             draw_temperature();
             ssd1306_send_data(&ssd);    //atualiza o display
             sleep_ms(100);
+        }
+
+        if(timer_flag)
+        {
+            countdown();
+            timer_flag = false;
+        }
+
+        if(button_flag)
+        {
+            temp_config();
         }
         
        sleep_ms(10);
