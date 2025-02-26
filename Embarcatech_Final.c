@@ -7,7 +7,7 @@
 #include "inc/ssd1306.h"
 #include "inc/ledMatrix.h"
 #include "hardware/pio.h"
-
+#include "pico/bootrom.h" 
 
 #define I2C_PORT i2c1
 #define I2C_SDA 14
@@ -17,6 +17,7 @@
 #define VRY 26
 #define buttonJ 22
 #define buttonA 5
+#define buttonB 6
 #define DEADZONE 100
 #define TEMP_MIN -50.0
 #define TEMP_MAX 100.0
@@ -29,6 +30,7 @@
 #define GREEN_BRIGHT 50
 #define BLUE_BRIGHT 0
 #define TIMEOUT_US 5000000 // 5 seg (5.000.000 us)
+#define BUZZER_PIN 10
 
 uint led_rgb[3] = {13,11,12};
 uint x_center = 2047;   //centro padrão do joystick
@@ -44,11 +46,10 @@ char temp_str[10];
 uint16_t vry_value = 0;
 uint64_t volatile last_time = 0;    //variavel que indica o tempo da ultima demição
 uint64_t volatile current_time = 0; //variavel que indica o tempo da atual medição
-bool timer_flag = false;   //flag que habilita a chamada da função de contagem
-bool button_flag = false;
+bool volatile timer_flag = false;   //flag que habilita a chamada da função de contagem
+bool volatile button_flag = false;
 bool color = true;  //variavel que indica que se o pixel está ligado ou desligado
 ssd1306_t ssd; //inicializa a estrutura do display
-
 
 uint init_pwm(uint gpio, uint wrap) {
     gpio_set_function(gpio, GPIO_FUNC_PWM);
@@ -58,6 +59,16 @@ uint init_pwm(uint gpio, uint wrap) {
     
     pwm_set_enabled(slice_num, true);  
     return slice_num;  
+}
+
+void play_buzzer(uint freq, float duty_cycle) {
+    uint slice = pwm_gpio_to_slice_num(BUZZER_PIN);
+    uint clock_divider = 4; // Define o divisor do clock (ajuste se necessário)
+    uint wrap = clock_get_hz(clk_sys) / (clock_divider * freq);
+
+    pwm_set_clkdiv(slice, clock_divider);
+    pwm_set_wrap(slice, wrap);
+    pwm_set_gpio_level(BUZZER_PIN, wrap * duty_cycle);
 }
 
 void init_rgb(uint *led)
@@ -79,12 +90,18 @@ void init_buttons()
 {
     gpio_init(buttonJ);
     gpio_init(buttonA);
+    gpio_init(buttonB);
+
 
     gpio_set_dir(buttonJ, GPIO_IN);
     gpio_set_dir(buttonA, GPIO_IN);
+    gpio_set_dir(buttonB, GPIO_IN);
+
 
     gpio_pull_up(buttonJ);
     gpio_pull_up(buttonA);
+    gpio_pull_up(buttonB);
+
 }
 
 void init_display()
@@ -106,49 +123,35 @@ void init_display()
     ssd1306_send_data(&ssd);
 }
 
-void gpio_irq_handler(uint gpio, uint32_t events)
-{
-    current_time = to_ms_since_boot(get_absolute_time());   //pega o tempo atual
-
-    if(current_time - last_time > 200) button_flag = true;
-
-}
-
 void clear_screen() {
     printf("\033[2J\033[H");
 }
 
 float get_temperature() 
 {
-    adc_select_input(0);  // Seleciona a entrada do ADC para o eixo Y do joystick
-    vry_value = adc_read();  // Lê o valor do ADC
+    adc_select_input(0);  
+    vry_value = adc_read();  
 
     // Verifica se o joystick está dentro da zona neutra
     if (vry_value > (y_center - DEADZONE) && vry_value < (y_center + DEADZONE)) {
-        return (temp_ideal_min + temp_ideal_max) / 2.0;  // Retorna a média entre os valores ideais
+        return (temp_ideal_min + temp_ideal_max) / 2.0;
     }
 
     float delta;
     
     if (vry_value < y_center) { // Movimento para baixo
         delta = (float)(y_center - vry_value) / (float)(y_center - DEADZONE);
-        delta = -delta; // Inverte para garantir que delta seja negativo para movimento para baixo
+        delta = -delta; 
     } else { // Movimento para cima
         delta = (float)(vry_value - (y_center + DEADZONE)) / (float)((ADC_MAX) - (y_center + DEADZONE));
     }
 
-    // Limitamos delta ao intervalo esperado [-1, 1]
     if (delta < -1.0) delta = -1.0;
     if (delta > 1.0) delta = 1.0;
 
-
-    // Determina a amplitude com base na direção do movimento
     float amplitude = (delta < 0) ? (temp_ideal_min - TEMP_MIN) : (TEMP_MAX - temp_ideal_max);
-
-    // Corrige o cálculo da temperatura para respeitar os valores mínimos e máximos corretamente
     float temperature = ((delta < 0) ? temp_ideal_min  : temp_ideal_max ) + (delta * amplitude);
 
-    // Formata a temperatura como string para exibição
     sprintf(temp_str, "%.2f", temperature);
 
     return temperature;
@@ -170,6 +173,7 @@ void yellow_led_blink()
     pwm_set_gpio_level(led_rgb[0], stepYellow);//atualiza o ciclo de trabalho do eixo x
     pwm_set_gpio_level(led_rgb[1], stepYellow);//atualiza o ciclo de trabalho do eixo x
 
+    play_buzzer(1000, 0.1);
 }
 
 void red_led_blink()
@@ -188,6 +192,7 @@ void red_led_blink()
     pwm_set_gpio_level(led_rgb[0], stepRed);//atualiza o ciclo de trabalho do vermelho de acordo com o passo
     pwm_set_gpio_level(led_rgb[1], 0);//garante que o verde estará apagado
 
+    play_buzzer(2000, 0.3);
 }
 
 void draw_temperature()
@@ -230,9 +235,23 @@ void countdown()
     npClear();
 }
 
+void gpio_irq_handler(uint gpio, uint32_t events)
+{
+    gpio_set_irq_enabled(buttonA, GPIO_IRQ_EDGE_FALL, false); // Desativa interrupção temporariamente
+    
+    current_time = to_ms_since_boot(get_absolute_time());
+    if(current_time - last_time > 200) {
+        button_flag = true;
+    }
+
+    gpio_set_irq_enabled(buttonA, GPIO_IRQ_EDGE_FALL, true); // Reativa interrupção
+
+    if(gpio == buttonB) reset_usb_boot(0, 0); // Reinicia o dispositivo no modo bootset
+}
+
 bool repeating_timer_callback(struct repeating_timer *t)
 {
-    printf("\nInterrupção de timer");
+    printf("\nInterrupção do timer");
     timer_flag = true;
 }
 
@@ -241,8 +260,6 @@ int get_input_with_timeout(float *value) {
     int index = 0;
     absolute_time_t start_time = get_absolute_time();
 
-    printf("> ");
-
     while (true) {
         // Verifica se atingiu o tempo limite
         if (absolute_time_diff_us(start_time, get_absolute_time()) > TIMEOUT_US) {
@@ -250,14 +267,29 @@ int get_input_with_timeout(float *value) {
             return 0; // Timeout
         }
 
-        int ch = getchar_timeout_us(100000); // Aguarda 100ms por um caractere
+        int ch = getchar_timeout_us(100000); // Aguarda até 100ms por um caractere
 
-        if (ch != PICO_ERROR_TIMEOUT) {
-            if (ch == '\n' || index >= sizeof(buffer) - 1) {
-                buffer[index] = '\0'; // Finaliza string
+        if (ch != PICO_ERROR_TIMEOUT) { 
+            // Se for ENTER, finaliza a string
+            if (ch == '\n' || ch == '\r') {
+                buffer[index] = '\0'; 
+                printf("\n"); // Nova linha após entrada
                 break;
             }
-            buffer[index++] = ch;
+            // Se for BACKSPACE, remove último caractere
+            else if (ch == 8 || ch == 127) { 
+                if (index > 0) {
+                    index--;
+                    printf("\b \b"); // Remove caractere na tela
+                }
+            }
+            // Se for um número, ponto decimal ou sinal válido, armazena
+            else if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '+') { 
+                if (index < sizeof(buffer) - 1) {
+                    buffer[index++] = ch;
+                    printf("%c", ch); // Ecoa o caractere digitado
+                }
+            }
         }
     }
 
@@ -266,54 +298,50 @@ int get_input_with_timeout(float *value) {
         return 1; // Entrada válida
     }
 
+    printf("\nEntrada inválida!\n");
     return 0; // Entrada inválida
 }
 
-void temp_config()
-{
+void temp_config() {
     float temp_min, temp_max;
-    char hold;
 
     clear_screen();
-
     printf("\nInforme a temperatura MINIMA ideal: ");
-    scanf("%f", &temp_min);
-    printf("\nTemperatura minima informada: %.2f ", temp_min);
+    if (!get_input_with_timeout(&temp_min)) return;
+    printf("\nTemperatura mínima informada: %.2f ", temp_min);
 
-
-    while(temp_min < TEMP_MIN || temp_min > TEMP_MAX-1)
-    {
-        printf("\n\n\nA temperatura informada eh invalida. ");
-        printf("\nInforme uma temperatura entre %.2f e %.2f: ", TEMP_MIN, TEMP_MAX-1);
-        scanf("%f", &temp_min);
-        printf("\nTemperatura minima informada: %.2f ", temp_min);
-
+    while (temp_min < TEMP_MIN || temp_min > TEMP_MAX - 1) {
+        printf("\n\nA temperatura informada é invalida!");
+        printf("\n\nInforme uma temperatura entre %.2f e %.2f: ", TEMP_MIN, TEMP_MAX - 1);
+        if (!get_input_with_timeout(&temp_min)) return;
+        printf("\nTemperatura mínima informada: %.2f ", temp_min);
     }
 
     printf("\n\nInforme a temperatura MAXIMA ideal: ");
-    scanf("%f", &temp_max);
-    printf("\nTemperatura maxima informada: %.2f ", temp_min);
+    if (!get_input_with_timeout(&temp_max)) return;
+    printf("\nTemperatura máxima informada: %.2f ", temp_max);
 
-
-    while(temp_max < temp_min || temp_max > TEMP_MAX)
-    {
-        printf("\n\n\nA temperatura informada eh invalida. ");
-        printf("\nInforme uma temperatura entre %.2f e %.2f: ", temp_min, TEMP_MAX);
-        scanf("%f", &temp_max);
-        printf("\nTemperatura maxima informada: %.2f ", temp_min);
-
+    while (temp_max < temp_min || temp_max > TEMP_MAX) {
+        printf("\n\nA temperatura informada é invalida.");
+        printf("\n\nInforme uma temperatura entre %.2f e %.2f: ", temp_min, TEMP_MAX);
+        if (!get_input_with_timeout(&temp_max)) return;
+        printf("\nTemperatura máxima informada: %.2f ", temp_max);
     }
 
     temp_ideal_min = temp_min;
     temp_ideal_max = temp_max;
 
     printf("\n\nIntervalo ideal ajustado para %.2f até %.2f", temp_min, temp_max);
-    printf("\nPressione qualquer tecla para sair. ");
-    scanf("%f", &temp_min);
+    printf("\nPressione qualquer tecla para sair.");
+    getchar_timeout_us(TIMEOUT_US); // Apenas para aguardar entrada final
 }
 
 int main()
 {
+    float temperature = (temp_ideal_max + temp_ideal_min)/2;
+
+    system("chcp 65001>null");
+
     stdio_init_all();
 
     init_rgb(led_rgb);//inicializa o led rgb
@@ -322,8 +350,8 @@ int main()
 
     init_display();//inicializa o display
 
-    npInit(LED_PIN);        //inicializa matriz de led
-    npClear();              //limpa a matriz
+    npInit(LED_PIN);//inicializa matriz de led
+    npClear(); //limpa a matriz
     
     adc_init();//inicializa o adc
     adc_gpio_init(VRX);//inicializa o pino X do adc
@@ -347,19 +375,24 @@ int main()
     uint pwm_red = init_pwm(led_rgb[0],wrap);
     uint pwm_green = init_pwm(led_rgb[1],wrap);
 
+    uint pwm_buzzer = init_pwm(BUZZER_PIN, wrap);// inicializa o pwm do buzzer
+
+
     struct repeating_timer timer;
     
     add_repeating_timer_ms(30000, repeating_timer_callback, NULL, &timer);
 
     gpio_set_irq_enabled_with_callback(buttonA, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+    gpio_set_irq_enabled_with_callback(buttonB, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
     //limpa o display. O display inicia com todos os pixels apagados.
     ssd1306_fill(&ssd, false);
+    sprintf(temp_str, "%.2f", temperature);
     ssd1306_send_data(&ssd);
 
     while (true) {
 
-        float temperature = get_temperature(); //recebe o valor da temperatura com base na leitura de Y
+        temperature = get_temperature(); //recebe o valor da temperatura com base na leitura de Y
         printf("\n Y value: %d", vry_value);
         printf("\n temperature value: %.2f", temperature);
 
@@ -370,10 +403,12 @@ int main()
             red_led_blink();
         }else if(temperature < temp_ideal_min-SAFE_RANGE_1 || temperature > temp_ideal_max+SAFE_RANGE_1)
         {
-            yellow_led_blink();      
+            yellow_led_blink();   
         }else{
             pwm_set_gpio_level(led_rgb[0], 0);
-            pwm_set_gpio_level(led_rgb[1], 0);
+            pwm_set_gpio_level(led_rgb[1], wrap*0.1);
+            pwm_set_gpio_level(BUZZER_PIN, 0);
+
         }
 
         ssd1306_fill(&ssd, !color); //limpa o display
