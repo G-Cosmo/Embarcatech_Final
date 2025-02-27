@@ -81,6 +81,21 @@
       "top": 239.4,
       "left": 53.4,
       "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "btn2",
+      "top": 284.6,
+      "left": -134.4,
+      "attrs": { "color": "green", "xray": "1" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "bz1",
+      "top": 437.1,
+      "left": 141.3,
+      "rotate": 90,
+      "attrs": { "volume": "0.1" }
     }
   ],
   "connections": [
@@ -178,7 +193,11 @@
     [ "joystick1:SEL", "pico:GP22", "green", [ "v0" ] ],
     [ "joystick1:VCC", "pico:3V3", "red", [ "v0" ] ],
     [ "joystick1:HORZ", "pico:GP27", "green", [ "v67.2" ] ],
-    [ "joystick1:GND", "pico:GND.7", "black", [ "v48" ] ]
+    [ "joystick1:GND", "pico:GND.7", "black", [ "v48" ] ],
+    [ "pico:GP6", "btn2:2.l", "red", [ "h-105.6", "v-96" ] ],
+    [ "btn2:1.r", "pico:GND.1", "black", [ "v0", "h9.8", "v57.6" ] ],
+    [ "pico:GP10", "bz1:2", "red", [ "h96", "v19.2" ] ],
+    [ "bz1:1", "pico:GND.5", "black", [ "h-2.4", "v30.6" ] ]
   ],
   "dependencies": {}
 }
