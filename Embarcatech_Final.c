@@ -377,7 +377,6 @@ int main()
 
     uint pwm_buzzer = init_pwm(BUZZER_PIN, wrap);// inicializa o pwm do buzzer
 
-
     struct repeating_timer timer;
     
     add_repeating_timer_ms(30000, repeating_timer_callback, NULL, &timer);
